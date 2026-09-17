@@ -1,0 +1,31 @@
+# Python environments
+.venv/
+.python/
+
+# Python cache
+.cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# User projects and generated output
+projects/
+runs/
+
+# Logs
+*.log
+editor-stderr.log
+editor-stdout.log
+
+# Local/temp files
+*.tmp
+*.temp
+~*
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
