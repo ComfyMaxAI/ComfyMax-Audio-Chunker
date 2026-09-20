@@ -15,7 +15,7 @@ from .project import Document,playable
 from .audio import Transport,Cursor,load_audio
 from .marker_waveform import MarkerWaveform
 from .markers import (initial_state,boundaries,intervals,created_scenes,scenes_current,create_scenes,
-                      add_marker,move_marker,delete_marker,validate_marker_state,set_interval_type)
+                      add_marker,move_marker,delete_marker,validate_marker_state,set_interval_type,add_automatic_markers)
 from .interval_types import VocalActivity,TYPES
 from .theme import apply_theme
 from .exporter import export_project,validate_scenes,ExportValidationError
@@ -114,6 +114,16 @@ class MarkerEditor(QMainWindow):
         self.undo_button=self.button(edit,'Undo',self.history.undo); self.redo_button=self.button(edit,'Redo',self.history.redo)
         self.history.canUndoChanged.connect(self.undo_button.setEnabled); self.history.canRedoChanged.connect(self.redo_button.setEnabled)
         self.undo_button.setEnabled(False); self.redo_button.setEnabled(False); ml.addLayout(edit)
+        automatic=QHBoxLayout(); automatic.addWidget(QLabel('Automatic marker interval:'))
+        self.automatic_interval=QDoubleSpinBox(); self.automatic_interval.setDecimals(3)
+        self.automatic_interval.setRange(.001,999999); self.automatic_interval.setValue(15.0)
+        self.automatic_interval.setSuffix(' seconds'); self.automatic_interval.setAccessibleName('Automatic marker interval')
+        self.automatic_interval.setToolTip('Absolute master-song intervals. Existing export validation requires scenes of at most 15 seconds.')
+        automatic.addWidget(self.automatic_interval)
+        self.clear_existing_markers=QCheckBox('Clear existing markers first'); self.clear_existing_markers.setChecked(True)
+        automatic.addWidget(self.clear_existing_markers)
+        self.automatic_button=self.button(automatic,'Add automatic markers',self.add_automatic)
+        automatic.addStretch(); ml.addLayout(automatic)
         listen=QHBoxLayout(); self.audition_button=self.button(listen,'Audition Around Marker',self.audition_marker)
         listen.addWidget(QLabel('Before / after:')); self.before=QDoubleSpinBox(); self.after=QDoubleSpinBox()
         for spin in (self.before,self.after):
@@ -318,6 +328,12 @@ class MarkerEditor(QMainWindow):
         if not self.doc: return
         frame=self.transport.position(); self.edit(lambda:add_marker(self.state,frame,self.transport.total,self.classifier),'place marker')
         if frame in self.state['markers']: self.select_marker(frame)
+
+    def add_automatic(self):
+        if not self.doc or self.busy: return
+        timeline=self.doc.data['timeline']
+        self.edit(lambda:add_automatic_markers(self.state,timeline['frames'],timeline['sample_rate'],
+                  self.automatic_interval.value(),self.clear_existing_markers.isChecked()),'add automatic markers')
 
     def select_marker(self,frame):
         self.selected_marker=frame; self.marker_time.setValue(frame/self.transport.rate); self.refresh()

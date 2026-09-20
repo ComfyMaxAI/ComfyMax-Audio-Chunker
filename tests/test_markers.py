@@ -34,6 +34,48 @@ class MarkerModelTests(unittest.TestCase):
         with self.assertRaises(ValueError): delete_marker(state,0,2000)
         self.assertTrue(created_scenes(create_scenes(state,2000),100)[0]['over_limit'])
 
+    def test_automatic_master_timeline_and_export_rows(self):
+        from comfymax_audio_chunker.editor.exporter import validate_scenes
+        rate=48000; total=62*rate
+        original=create_scenes({'markers':[rate],'scenes':None},total)
+        before=copy.deepcopy(original)
+        state=add_automatic_markers(original,total,rate)
+        self.assertEqual(boundaries(state,total),[0,15*rate,30*rate,45*rate,60*rate,total])
+        self.assertEqual(original,before)
+        self.assertEqual(state['scenes'],original['scenes'])
+        self.assertFalse(scenes_current(state,total))
+        self.assertTrue(all(r['type']=='Vocal' and r['source']=='default' for r in state['interval_types']))
+        state=create_scenes(state,total)
+        rows=validate_scenes({'timeline':{'frames':total,'sample_rate':rate},'marker_editor':state})
+        self.assertEqual([(r['start'],r['end']) for r in rows],[(0,15),(15,30),(30,45),(45,60),(60,62)])
+        self.assertTrue(all(r['audio_source']=='vocals' for r in rows))
+
+    def test_automatic_exact_end_short_song_and_invalid_intervals(self):
+        for total,expected in ((6000,[1500,3000,4500]),(1000,[]),(1500,[])):
+            state=add_automatic_markers({'markers':[],'scenes':None},total,100)
+            self.assertEqual(state['markers'],expected)
+            self.assertTrue(all(r['duration']>0 for r in created_scenes(create_scenes(state,total),100)))
+        for seconds in (0,-1,float('nan'),float('inf'),.001):
+            with self.assertRaises(ValueError):
+                add_automatic_markers({'markers':[],'scenes':None},6000,100,seconds)
+
+    def test_automatic_merge_duplicates_and_default_types(self):
+        state=create_scenes({'markers':[500,1500],'scenes':None},6200)
+        state=set_interval_type(state,0,'Instrumental',6200)
+        merged=add_automatic_markers(state,6200,100,clear_existing=False)
+        self.assertEqual(merged['markers'],[500,1500,3000,4500,6000])
+        self.assertEqual(merged['interval_types'][0]['type'],'Instrumental')
+        self.assertEqual(add_automatic_markers(merged,6200,100,clear_existing=False),merged)
+        replaced=add_automatic_markers(merged,6200,100)
+        self.assertEqual(replaced['markers'],[1500,3000,4500,6000])
+        self.assertTrue(all(r['type']=='Vocal' for r in replaced['interval_types']))
+
+    def test_automatic_fractional_interval_does_not_accumulate_rounding(self):
+        state=add_automatic_markers({'markers':[],'scenes':None},100,10,.15)
+        self.assertEqual(state['markers'][:6],[2,3,4,6,8,9])
+        self.assertEqual(state['markers'][-1],99)
+        self.assertEqual(len(state['markers']),len(set(state['markers'])))
+
     def test_switch_has_no_restart_or_seek(self):
         t=Transport({'mix':np.zeros((100,2),np.float32),'vocals':np.ones((100,2),np.float32)},100)
         sentinel=object(); t.stream=sentinel; t.active=True; t.cursor.frame=37
@@ -63,6 +105,29 @@ class MarkerGuiTests(unittest.TestCase):
         w.create_scene_snapshot(); self.assertEqual(w.state['scenes']['boundaries'],[0,2400,4800])
         self.assertEqual(w.doc.phrases,self.evidence)
         w.history.undo(); self.assertFalse(scenes_current(w.state,4800)); w.history.undo(); self.assertTrue(scenes_current(w.state,4800))
+    def test_automatic_controls_refresh_undo_and_manual_editing(self):
+        w=self.w; before=copy.deepcopy(w.state)
+        self.assertEqual(w.automatic_interval.value(),15.0)
+        self.assertTrue(w.clear_existing_markers.isChecked())
+        w.set_view(.01,.05); view=(w.detail.start,w.detail.span,w.navigation.value())
+        w.seek(.012); position=w.transport.position()
+        w.automatic_interval.setValue(.025)
+        with patch.object(w,'classifier',side_effect=AssertionError('No classification')):
+            w.automatic_button.click()
+        self.assertEqual(w.state['markers'],[1200,2400,3600])
+        self.assertEqual(w.detail.markers,w.state['markers']); self.assertEqual(w.overview.markers,w.state['markers'])
+        self.assertEqual(w.marker_table.rowCount(),5)
+        self.assertEqual((w.detail.start,w.detail.span,w.navigation.value()),view)
+        self.assertEqual(w.transport.position(),position)
+        generated=copy.deepcopy(w.state); w.history.undo(); self.assertEqual(w.state,before)
+        w.history.redo(); self.assertEqual(w.state,generated)
+        w.create_button.click(); self.assertEqual(w.scene_table.rowCount(),4)
+        w.change_interval_type(0,'Instrumental'); self.assertEqual(w.state['interval_types'][0]['type'],'Instrumental')
+        w.drag_marker(1200,1440); self.assertIn(1440,w.state['markers'])
+        w.clear_existing_markers.setChecked(False); w.automatic_button.click()
+        self.assertEqual(w.state['markers'],[1200,1440,2400,3600])
+        w.select_marker(1440); w.delete_button.click(); self.assertNotIn(1440,w.state['markers'])
+
     def test_marker_controls_audition_and_fixed_end(self):
         w=self.w; w.seek(.05); w.add_button.click(); w.marker_time.setValue(.06); w.move_button.click()
         self.assertEqual(w.selected_marker,2880)

@@ -1,5 +1,6 @@
 """Authoritative manual markers and explicit scene snapshots. No lyric dependency."""
 import copy
+from fractions import Fraction
 from .interval_types import TYPES,reconcile,validate_interval_types
 
 
@@ -96,4 +97,27 @@ def delete_marker(state,frame,total,classifier=None):
     if frame not in state['markers']: raise ValueError('Song start and end cannot be deleted.')
     result=copy.deepcopy(state); result['markers'].remove(frame)
     result['interval_types']=reconcile(state.get('interval_types',[]),boundaries(result,total),classifier)
+    return result
+
+
+def add_automatic_markers(state,total,rate,seconds=15.0,clear_existing=True):
+    """Place sample-rounded absolute intervals; start/end remain fixed boundaries."""
+    if type(total) is not int or total<=0 or type(rate) is not int or rate<=0:
+        raise ValueError('The master song must have a valid duration and sample rate.')
+    try:
+        step=Fraction(str(seconds))*rate
+    except (ValueError,ZeroDivisionError):
+        raise ValueError('Choose a finite positive interval in seconds.') from None
+    if step<1:
+        raise ValueError('The interval must be at least one audio sample.')
+    # Round each absolute position, not a rounded step, to avoid cumulative drift.
+    count=(total*step.denominator+step.numerator-1)//step.numerator
+    generated={round(i*step) for i in range(1,count)}
+    result=copy.deepcopy(state)
+    result['markers']=sorted({p for p in generated if 0<p<total} |
+                             (set() if clear_existing else set(state['markers'])))
+    # No activity classifier: fresh intervals use the existing Vocal default.
+    result['interval_types']=reconcile([] if clear_existing else state.get('interval_types',[]),
+                                       boundaries(result,total))
+    validate_marker_state(result,total)
     return result
